@@ -119,8 +119,8 @@ def train(
     model.to(device)
 
     for epoch in range(num_epochs):
-        for _ in range(n_eval_samples):
-            print(f"{get_test_sample(model, tokenizer)}\n")
+        for i in range(n_eval_samples):
+            print(f"{get_test_sample(model, tokenizer)}\n-------------------\n")
         model.train()
         progress_bar = tqdm(
             train_dataloader,
@@ -171,15 +171,21 @@ if __name__ == "__main__":
     n_head = 6
     dropout = 0.2
 
-    characters = list(string.ascii_letters + string.digits) + [" "]
+    characters = list(string.ascii_letters + string.digits + string.punctuation) + [
+        "\n",
+        " ",
+        "\t",
+    ]
     tokenizer = CharacterTokenizer(characters, block_size)
 
     # Sanity check tokenizer
     # print(f"Tokenizer test: {tokenizer.encode('Hello, my dog is cute.!')}")
     decoded = tokenizer.decode(
-        tokenizer.encode("Hello, my dog is cute.!"), skip_special_tokens=True
+        tokenizer.encode("Hello, my dog is cute!"), skip_special_tokens=True
     )
-    assert decoded == "Hello my dog is cute", f"[FAIL] Tokenizer test failed: {decoded}"
+    assert (
+        decoded == "Hello, my dog is cute!"
+    ), f"[FAIL] Tokenizer test failed: {decoded}"
 
     lm_dataset = load_shakespeare_data(tokenizer, block_size)
     data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)

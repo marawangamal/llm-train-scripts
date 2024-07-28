@@ -24,15 +24,16 @@ from transformers import AutoTokenizer
 from transformers import AutoModelForCausalLM, TrainingArguments, Trainer
 from transformers import DataCollatorForLanguageModeling
 
-tokenizer = AutoTokenizer.from_pretrained("distilbert/distilgpt2")
-block_size = 128
+
+def preprocess_eli5(examples):
+    return {"text": [" ".join(x) for x in examples["answers.text"]]}
 
 
-def preprocess_function(examples):
-    return tokenizer([" ".join(x) for x in examples["answers.text"]])
+def tokenize(examples, tokenizer):
+    return tokenizer(examples["text"])
 
 
-def preprocess_function_simple(examples):
+def preprocess_function_simple(examples, tokenizer, block_size):
     return tokenizer(
         [" ".join(x) for x in examples["answers.text"]],
         padding="max_length",
@@ -41,7 +42,7 @@ def preprocess_function_simple(examples):
     )
 
 
-def group_texts(examples):
+def group_texts(examples, block_size):
     # Concatenate all texts.
     concatenated_examples = {k: sum(examples[k], []) for k in examples.keys()}
     total_length = len(concatenated_examples[list(examples.keys())[0]])
@@ -58,54 +59,67 @@ def group_texts(examples):
     return result
 
 
-def load_eli5_data():
+def load_eli5_data(tokenizer, block_size):
     eli5 = load_dataset("eli5_category", split="train[:5000]")
     eli5 = eli5.train_test_split(test_size=0.2)  # type: ignore
     eli5 = eli5.flatten()
-    tokenized_eli5 = eli5.map(
-        preprocess_function,
+    eli5_processed = eli5.map(
+        preprocess_eli5,
         batched=True,
-        num_proc=4,  # type: ignore
-        remove_columns=eli5["train"].column_names,  # type: ignore
     )
-    lm_dataset = tokenized_eli5.map(group_texts, batched=True, num_proc=4)
-    return lm_dataset
+    eli5_tokenized = eli5_processed.map(
+        lambda examples: tokenize(examples, tokenizer),
+        batched=True,
+        num_proc=4,
+        remove_columns=[*eli5["train"].column_names, "text"],
+    )
+    # Each sample is now of length `block_size`
+    eli5_regrouped = eli5_tokenized.map(
+        lambda examples: group_texts(examples, block_size),
+        batched=True,
+        num_proc=4,
+    )
+    return eli5_regrouped
 
 
-lm_dataset = load_eli5_data()
-tokenizer.pad_token = tokenizer.eos_token
-data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
+if __name__ == "__main__":
 
-training_args = TrainingArguments(
-    output_dir="./outputs",
-    eval_strategy="epoch",
-    learning_rate=2e-5,
-    weight_decay=0.01,
-)
+    tokenizer = AutoTokenizer.from_pretrained("distilbert/distilgpt2")
+    block_size = 128
 
-model = AutoModelForCausalLM.from_pretrained("distilbert/distilgpt2")
-trainer = Trainer(
-    model=model,
-    args=training_args,
-    train_dataset=lm_dataset["train"],  # type: ignore
-    eval_dataset=lm_dataset["test"],  # type: ignore
-    data_collator=data_collator,  # type: ignore
-)
+    lm_dataset = load_eli5_data(tokenizer, block_size)
+    tokenizer.pad_token = tokenizer.eos_token
+    data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
 
+    training_args = TrainingArguments(
+        output_dir="./outputs",
+        eval_strategy="epoch",
+        learning_rate=2e-5,
+        weight_decay=0.01,
+    )
 
-trainer.train()
+    model = AutoModelForCausalLM.from_pretrained("distilbert/distilgpt2")
+    trainer = Trainer(
+        model=model,
+        args=training_args,
+        train_dataset=lm_dataset["train"],  # type: ignore
+        eval_dataset=lm_dataset["test"],  # type: ignore
+        data_collator=data_collator,  # type: ignore
+    )
 
-# Evaluate the model
-eval_results = trainer.evaluate()
-print(f"Perplexity: {math.exp(eval_results['eval_loss']):.2f}")
+    trainer.train()
 
-# Inference
-cpu_device = "cpu"
-model.to(cpu_device)
-model.eval()
-prompt = "Somatic hypermutation allows the immune system to"
-inputs = tokenizer(prompt, return_tensors="pt").input_ids
-outputs = model.generate(
-    inputs, max_new_tokens=100, do_sample=True, top_k=50, top_p=0.95
-)
-print(tokenizer.decode(outputs[0], skip_special_tokens=True))
+    # Evaluate the model
+    eval_results = trainer.evaluate()
+    print(f"Perplexity: {math.exp(eval_results['eval_loss']):.2f}")
+
+    # Inference
+    cpu_device = "cpu"
+    model.to(cpu_device)
+    model.eval()
+    prompt = "Somatic hypermutation allows the immune system to"
+    inputs = tokenizer(prompt, return_tensors="pt").input_ids
+    outputs = model.generate(
+        inputs, max_new_tokens=100, do_sample=True, top_k=50, top_p=0.95
+    )
+    print(tokenizer.decode(outputs[0], skip_special_tokens=True))

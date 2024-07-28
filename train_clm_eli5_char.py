@@ -1,7 +1,9 @@
 """
 Fine-tune GPT-2 on ELI5 dataset.
 
-Resources: https://huggingface.co/docs/transformers/tasks/language_modeling
+Resources: 
+https://huggingface.co/docs/transformers/tasks/language_modeling
+https://github.com/dariush-bahrami/character-tokenizer/tree/master
 
 
 Two options for data loading:
@@ -18,17 +20,18 @@ Given a dataset of sequences of different length {s1, s2, ..., s2}, we have two 
 
 """
 
+import string
 import math
 import torch
 from torch.utils.data import DataLoader
 from datasets import load_dataset
 from transformers import (
-    AutoTokenizer,
     GPT2Config,
     GPT2LMHeadModel,
-    AutoModelForCausalLM,
 )
 from transformers import DataCollatorForLanguageModeling, get_scheduler
+
+from character_tokenizer import CharacterTokenizer
 
 
 def preprocess_eli5(examples):
@@ -66,7 +69,7 @@ def group_texts(examples, block_size):
 
 
 def load_eli5_data(tokenizer, block_size):
-    eli5 = load_dataset("eli5_category", split="train[:5000]")
+    eli5 = load_dataset("eli5_category", split="train[:10]")
     eli5 = eli5.train_test_split(test_size=0.2)  # type: ignore
     eli5 = eli5.flatten()
     eli5_processed = eli5.map(
@@ -144,11 +147,15 @@ def train(model, train_dataloader, eval_dataloader, num_epochs=3):
 
 if __name__ == "__main__":
 
-    tokenizer = AutoTokenizer.from_pretrained("distilbert/distilgpt2")
+    # characters = list(string.ascii_letters + string.digits + string.punctuation) + [" "]
+    characters = list(string.ascii_letters + string.digits) + [" "]
     block_size = 128
+    tokenizer = CharacterTokenizer(characters, block_size)
+
+    # Sanity check tokenizer
+    print(tokenizer.decode(tokenizer.encode("Hello, my dog is cute.!")))
 
     lm_dataset = load_eli5_data(tokenizer, block_size)
-    tokenizer.pad_token = tokenizer.eos_token
     data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
 
     # Data loaders
@@ -159,13 +166,10 @@ if __name__ == "__main__":
         lm_dataset["test"], batch_size=8, collate_fn=data_collator  # type: ignore
     )
 
-    # (Option A) Train from scratch
-    # # Load configuration from pretrained model and create a new model from scratch
-    # config = GPT2Config.from_pretrained("distilbert/distilgpt2")
-    # model = GPT2LMHeadModel(config)
-
-    # (Option B) Pretrained
-    model = AutoModelForCausalLM.from_pretrained("distilbert/distilgpt2")
+    # Load configuration from pretrained model and create a new model from scratch
+    config = GPT2Config.from_pretrained("distilbert/distilgpt2")
+    config.vocab_size = len(tokenizer)
+    model = GPT2LMHeadModel(config)
 
     train(model, train_dataloader, eval_dataloader)
 

@@ -35,21 +35,13 @@ from transformers import DataCollatorForLanguageModeling, get_scheduler
 from character_tokenizer import CharacterTokenizer
 
 
-def preprocess_eli5(examples):
-    return {"text": [" ".join(x) for x in examples["answers.text"]]}
+def preprocess_shakespeare(examples):
+    chars = list(examples["text"])
+    return {"text": chars}
 
 
 def tokenize(examples, tokenizer):
     return tokenizer(examples["text"])
-
-
-def preprocess_function_simple(examples, tokenizer, block_size):
-    return tokenizer(
-        [" ".join(x) for x in examples["answers.text"]],
-        padding="max_length",
-        truncation=True,
-        max_length=block_size,
-    )
 
 
 def group_texts(examples, block_size):
@@ -69,37 +61,24 @@ def group_texts(examples, block_size):
     return result
 
 
-def load_eli5_data(tokenizer, block_size):
-    eli5 = load_dataset("eli5_category", split="train[:5000]")
-    eli5 = eli5.train_test_split(test_size=0.2)  # type: ignore
-    eli5 = eli5.flatten()
-    eli5_processed = eli5.map(
-        preprocess_eli5,
-        batched=True,
+def load_shakespeare_data(tokenizer, block_size, test_size=0.2):
+    dataset = load_dataset("tiny_shakespeare", split="train")
+    # d = d.map(preprocess_shakespeare)
+    dataset = dataset.map(
+        lambda x: tokenize(x, tokenizer),
+        remove_columns=["text"],
     )
-    eli5_tokenized = eli5_processed.map(
-        lambda examples: tokenize(examples, tokenizer),
-        batched=True,
-        num_proc=4,
-        remove_columns=[*eli5["train"].column_names, "text"],
-    )
-    # Each sample is now of length `block_size`
-    eli5_regrouped = eli5_tokenized.map(
-        lambda examples: group_texts(examples, block_size),
-        batched=True,
-        num_proc=4,
-    )
-    return eli5_regrouped
+    dataset = dataset.map(lambda x: group_texts(x, block_size), batched=True)
+    dataset = dataset.train_test_split(test_size=test_size)  # type: ignore
+    # DEBUG: print first example decoded
+    print(f"First example: \n{tokenizer.decode(dataset['train']['input_ids'][0])}")  # type: ignore
+    return dataset
 
 
-def get_test_sample(
-    model, tokenizer, prompt="Somatic hypermutation allows the immune system to"
-):
+def get_test_sample(model, tokenizer, prompt="\n"):
     # Inference
-    cpu_device = "cpu"
-    model.to(cpu_device)  # type: ignore
     model.eval()
-    inputs = tokenizer(prompt, return_tensors="pt").input_ids
+    inputs = tokenizer(prompt, return_tensors="pt").input_ids.to(model.device)
     outputs = model.generate(
         inputs, max_new_tokens=100, do_sample=True, top_k=50, top_p=0.95
     )
@@ -107,13 +86,15 @@ def get_test_sample(
 
 
 # Train function
-def train(model, train_dataloader, eval_dataloader, num_epochs=5):
-    optimizer = torch.optim.AdamW(model.parameters(), lr=2e-5)  # type: ignore
+def train(
+    model, train_dataloader, eval_dataloader, num_epochs=5, lr=2e-5, warmup_steps=100
+):
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr)  # type: ignore
     num_training_steps = num_epochs * len(train_dataloader)
     lr_scheduler = get_scheduler(
         name="linear",
         optimizer=optimizer,
-        num_warmup_steps=0,
+        num_warmup_steps=warmup_steps,
         num_training_steps=num_training_steps,
     )
 
@@ -123,16 +104,24 @@ def train(model, train_dataloader, eval_dataloader, num_epochs=5):
     n_train_ters = len(train_dataloader)
 
     for epoch in range(num_epochs):
+        smpl = get_test_sample(model, tokenizer)
+        print(f"Sample: {smpl}")
         model.train()
-        for batch in tqdm(train_dataloader, total=n_train_ters):
+        progress_bar = tqdm(
+            train_dataloader,
+            desc=f"Epoch {epoch+1}",
+            bar_format="{l_bar}{bar}| [Duration: {elapsed}][Loss: {postfix}]",
+        )
+        for i, batch in enumerate(progress_bar):
             batch = {k: v.to(device) for k, v in batch.items()}
             outputs = model(**batch)
             loss = outputs.loss
             loss.backward()
-
             optimizer.step()
             lr_scheduler.step()
             optimizer.zero_grad()
+            # Update progress bar with latest loss
+            progress_bar.set_postfix(loss=f"{loss.item():.3f}")
 
         model.eval()
         losses = []
@@ -145,20 +134,39 @@ def train(model, train_dataloader, eval_dataloader, num_epochs=5):
             losses.append(loss.item())
 
         eval_loss = sum(losses) / len(losses)
-        print(f"Epoch {epoch + 1}, Perplexity: {math.exp(eval_loss):.2f}")
+        print(
+            f"[Epoch {epoch + 1}] PPL: {math.exp(eval_loss):.2f} | Loss: {eval_loss:.2f}"
+        )
 
 
 if __name__ == "__main__":
 
-    # characters = list(string.ascii_letters + string.digits + string.punctuation) + [" "]
-    characters = list(string.ascii_letters + string.digits) + [" "]
+    # Configuration
+
+    # Training
+    lr = 1e-3
+    warmup_steps = 100
+    num_epochs = 20
+    batch_size = 8
     block_size = 128
+
+    # Model
+    n_embd = 384
+    n_layer = 6
+    n_head = 6
+    dropout = 0.2
+
+    characters = list(string.ascii_letters + string.digits) + [" "]
     tokenizer = CharacterTokenizer(characters, block_size)
 
     # Sanity check tokenizer
-    print(tokenizer.decode(tokenizer.encode("Hello, my dog is cute.!")))
+    # print(f"Tokenizer test: {tokenizer.encode('Hello, my dog is cute.!')}")
+    decoded = tokenizer.decode(
+        tokenizer.encode("Hello, my dog is cute.!"), skip_special_tokens=True
+    )
+    assert decoded == "Hello my dog is cute", f"[FAIL] Tokenizer test failed: {decoded}"
 
-    lm_dataset = load_eli5_data(tokenizer, block_size)
+    lm_dataset = load_shakespeare_data(tokenizer, block_size)
     data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
 
     # Data loaders
@@ -169,12 +177,25 @@ if __name__ == "__main__":
         lm_dataset["test"], batch_size=8, collate_fn=data_collator  # type: ignore
     )
 
-    # Load configuration from pretrained model and create a new model from scratch
-    config = GPT2Config.from_pretrained("distilbert/distilgpt2")
-    config.vocab_size = len(tokenizer)
+    # Configuration for a smaller GPT2 model (baby GPT)
+    config = GPT2Config(
+        vocab_size=len(tokenizer),
+        n_embd=n_embd,
+        n_layer=n_layer,
+        n_head=n_head,
+        dropout=dropout,
+        pad_token_id=tokenizer.pad_token_id,
+    )
     model = GPT2LMHeadModel(config)
 
-    train(model, train_dataloader, eval_dataloader)
+    train(
+        model,
+        train_dataloader,
+        eval_dataloader,
+        num_epochs=num_epochs,
+        lr=lr,
+        warmup_steps=warmup_steps,
+    )
 
     # Generate a test sample
     sample_output = get_test_sample(model, tokenizer)

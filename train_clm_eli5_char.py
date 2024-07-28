@@ -23,6 +23,7 @@ Given a dataset of sequences of different length {s1, s2, ..., s2}, we have two 
 import string
 import math
 import torch
+from tqdm import tqdm
 from torch.utils.data import DataLoader
 from datasets import load_dataset
 from transformers import (
@@ -69,7 +70,7 @@ def group_texts(examples, block_size):
 
 
 def load_eli5_data(tokenizer, block_size):
-    eli5 = load_dataset("eli5_category", split="train[:10]")
+    eli5 = load_dataset("eli5_category", split="train[:5000]")
     eli5 = eli5.train_test_split(test_size=0.2)  # type: ignore
     eli5 = eli5.flatten()
     eli5_processed = eli5.map(
@@ -106,7 +107,7 @@ def get_test_sample(
 
 
 # Train function
-def train(model, train_dataloader, eval_dataloader, num_epochs=3):
+def train(model, train_dataloader, eval_dataloader, num_epochs=5):
     optimizer = torch.optim.AdamW(model.parameters(), lr=2e-5)  # type: ignore
     num_training_steps = num_epochs * len(train_dataloader)
     lr_scheduler = get_scheduler(
@@ -119,9 +120,11 @@ def train(model, train_dataloader, eval_dataloader, num_epochs=3):
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     model.to(device)
 
+    n_train_ters = len(train_dataloader)
+
     for epoch in range(num_epochs):
         model.train()
-        for batch in train_dataloader:
+        for batch in tqdm(train_dataloader, total=n_train_ters):
             batch = {k: v.to(device) for k, v in batch.items()}
             outputs = model(**batch)
             loss = outputs.loss

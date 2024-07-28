@@ -41,7 +41,7 @@ def preprocess_shakespeare(examples):
 
 
 def tokenize(examples, tokenizer):
-    return tokenizer(examples["text"])
+    return tokenizer(examples["text"], add_special_tokens=False)
 
 
 def group_texts(examples, block_size):
@@ -75,19 +75,36 @@ def load_shakespeare_data(tokenizer, block_size, test_size=0.2):
     return dataset
 
 
-def get_test_sample(model, tokenizer, prompt="\n", max_new_tokens=512):
+def get_test_sample(
+    model,
+    tokenizer,
+    prompt="\n",
+    max_new_tokens=512,
+    top_k=200,
+    temperature=0.8,
+):
     # Inference
     model.eval()
     inputs = tokenizer(prompt, return_tensors="pt").input_ids.to(model.device)
     outputs = model.generate(
-        inputs, max_new_tokens=max_new_tokens, do_sample=True, top_k=50, top_p=0.95
+        inputs,
+        max_new_tokens=max_new_tokens,
+        do_sample=True,
+        top_k=top_k,
+        temperature=temperature,
     )
     return tokenizer.decode(outputs[0], skip_special_tokens=True)
 
 
 # Train function
 def train(
-    model, train_dataloader, eval_dataloader, num_epochs=5, lr=2e-5, warmup_steps=100
+    model,
+    train_dataloader,
+    eval_dataloader,
+    num_epochs=5,
+    lr=2e-5,
+    warmup_steps=100,
+    n_eval_samples=3,
 ):
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr)  # type: ignore
     num_training_steps = num_epochs * len(train_dataloader)
@@ -101,11 +118,9 @@ def train(
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     model.to(device)
 
-    n_train_ters = len(train_dataloader)
-
     for epoch in range(num_epochs):
-        smpl = get_test_sample(model, tokenizer)
-        print(f"Sample: {smpl}")
+        for _ in range(n_eval_samples):
+            print(f"{get_test_sample(model, tokenizer)}\n")
         model.train()
         progress_bar = tqdm(
             train_dataloader,

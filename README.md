@@ -20,8 +20,8 @@ pip install -r requirements.txt
 python train_clm_shakespeare_char.py
 ```
 
-Sample output:
+## Results
 
-```
-
-```
+| Script                        | Epochs | PPL  | Loss | Sample Output                                  |
+| ----------------------------- | ------ | ---- | ---- | ---------------------------------------------- |
+| train_clm_shakespeare_char.py | 50     | 1.44 | 1.3  | `ROMEO:\n\nWhat, shall I groan and tell thee?` |

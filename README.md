@@ -24,7 +24,7 @@ python train_clm_shakespeare_char.py
 
 | Script                        | Epochs | PPL  | Loss |
 | ----------------------------- | ------ | ---- | ---- |
-| train_clm_shakespeare_char.py | 50     | 3.96 | 1.38 |
+| train_clm_shakespeare_char.py | 20     | 3.96 | 1.38 |
 
 Sample outputs
 

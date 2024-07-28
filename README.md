@@ -17,5 +17,11 @@ Short simple language model training scripts using Hugging Face's `transformers`
 git clone
 cd llm-train-scripts
 pip install -r requirements.txt
-python train_clm_eli5.py
+python train_clm_shakespeare_char.py
+```
+
+Sample output:
+
+```
+
 ```

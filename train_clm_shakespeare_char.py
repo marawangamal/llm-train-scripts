@@ -75,12 +75,12 @@ def load_shakespeare_data(tokenizer, block_size, test_size=0.2):
     return dataset
 
 
-def get_test_sample(model, tokenizer, prompt="\n"):
+def get_test_sample(model, tokenizer, prompt="\n", max_new_tokens=512):
     # Inference
     model.eval()
     inputs = tokenizer(prompt, return_tensors="pt").input_ids.to(model.device)
     outputs = model.generate(
-        inputs, max_new_tokens=100, do_sample=True, top_k=50, top_p=0.95
+        inputs, max_new_tokens=max_new_tokens, do_sample=True, top_k=50, top_p=0.95
     )
     return tokenizer.decode(outputs[0], skip_special_tokens=True)
 
@@ -146,9 +146,9 @@ if __name__ == "__main__":
     # Training
     lr = 1e-3
     warmup_steps = 100
-    num_epochs = 20
-    batch_size = 8
-    block_size = 128
+    num_epochs = 50
+    batch_size = 64
+    block_size = 256
 
     # Model
     n_embd = 384
